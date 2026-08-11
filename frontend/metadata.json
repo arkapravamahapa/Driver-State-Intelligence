@@ -1,0 +1,6 @@
+{
+  "name": "Driver State Intelligence",
+  "description": "Professional race engineering software correlating driver radio speech, emotional stress state, and lap telemetry performance.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
