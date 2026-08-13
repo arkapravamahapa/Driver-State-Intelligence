@@ -4,12 +4,13 @@ import cors from 'cors';
 import routes from './src/routes';
 import { errorHandler } from './src/middleware/errorHandler';
 import { notFound } from './src/middleware/notFound';
+import { env } from './src/config/env';
 
 const app = express();
 
 // Load environment variables
-const DEFAULT_PORT = Number(process.env.PORT) || 3000;
-const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173';
+const DEFAULT_PORT = env.PORT;
+const FRONTEND_URL = env.FRONTEND_URL;
 
 // Middleware
 app.use(cors({ origin: FRONTEND_URL })); // Secure CORS for your React frontend

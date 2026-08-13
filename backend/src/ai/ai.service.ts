@@ -1,8 +1,9 @@
 import { HfInference } from "@huggingface/inference";
 import { DriverState, Sentiment, TopicCategory } from "../types";
+import { env } from "../config/env";
 
 // Initialize Hugging Face Inference using the token from environment variables
-const hf = new HfInference(process.env.HF_TOKEN);
+const hf = new HfInference(env.HF_TOKEN);
 
 export const aiService = {
   /**

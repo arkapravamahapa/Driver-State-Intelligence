@@ -6,6 +6,7 @@ import correlationRoutes from './correlation.routes';
 import stateRoutes from './state.routes';
 import performanceRoutes from './performance.routes';
 import insightRoutes from './insight.routes';
+import telemetryRoutes from './telemetry.routes';
 
 const router = Router();
 
@@ -25,5 +26,6 @@ router.use('/correlation', correlationRoutes);
 router.use('/state', stateRoutes);
 router.use('/performance', performanceRoutes);
 router.use('/insights', insightRoutes);
+router.use('/telemetry', telemetryRoutes);
 
 export default router;
