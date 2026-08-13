@@ -1,12 +1,64 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { MOCK_ENGINEER_INSIGHTS } from '../data/mockData';
 import { EngineerInsight, InsightCategory } from '../types';
+import { fetchInsights } from '../api/insights';
 import { StatusBadge } from '../components/common/StatusBadge';
 import { Lightbulb, AlertTriangle, Filter, CheckCircle2, Radio, ArrowRight } from 'lucide-react';
 
+type InsightsStatus = 'loading' | 'success' | 'error';
+
 export const EngineerInsights: React.FC = () => {
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
-  const [insights, setInsights] = useState<EngineerInsight[]>(MOCK_ENGINEER_INSIGHTS);
+  // ---- Insights now come from GET /api/insights instead of MOCK_ENGINEER_INSIGHTS.
+  // mockData.ts is kept as-is (untouched) and used below as a manual offline
+  // fallback if the API call fails.
+  const [insights, setInsights] = useState<EngineerInsight[]>([]);
+  const [insightsStatus, setInsightsStatus] = useState<InsightsStatus>('loading');
+  const [insightsError, setInsightsError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadInsights = async () => {
+      setInsightsStatus('loading');
+      setInsightsError(null);
+      try {
+        const data = await fetchInsights();
+        if (cancelled) return;
+        setInsights(data);
+        setInsightsStatus('success');
+      } catch (err) {
+        if (cancelled) return;
+        setInsightsError(err instanceof Error ? err.message : 'Failed to load engineer insights.');
+        setInsightsStatus('error');
+      }
+    };
+
+    loadInsights();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleRetry = () => {
+    setInsightsStatus('loading');
+    setInsightsError(null);
+    fetchInsights()
+      .then((data) => {
+        setInsights(data);
+        setInsightsStatus('success');
+      })
+      .catch((err) => {
+        setInsightsError(err instanceof Error ? err.message : 'Failed to load engineer insights.');
+        setInsightsStatus('error');
+      });
+  };
+
+  const handleUseDemoData = () => {
+    setInsights(MOCK_ENGINEER_INSIGHTS);
+    setInsightsStatus('success');
+    setInsightsError(null);
+  };
 
   const categories: string[] = [
     'ALL',
@@ -27,6 +79,54 @@ export const EngineerInsights: React.FC = () => {
       )
     );
   };
+
+  // ---- Loading state ----
+  if (insightsStatus === 'loading') {
+    return (
+      <div className="flex h-64 items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-slate-700 border-t-rose-500" />
+          <p className="font-mono text-xs uppercase tracking-wider text-slate-400">
+            Loading Engineer Insights…
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // ---- Error state (fetch failed) or empty state (API returned zero insights) ----
+  if (insightsStatus === 'error' || insights.length === 0) {
+    const isEmpty = insightsStatus === 'success' && insights.length === 0;
+
+    return (
+      <div className="flex h-64 items-center justify-center px-4">
+        <div className="w-full max-w-md rounded-xl border border-rose-500/30 bg-slate-900/90 p-6 text-center shadow-lg">
+          <h2 className="font-mono text-sm font-bold uppercase tracking-wider text-rose-400">
+            {isEmpty ? 'No Engineer Insights Available' : 'Unable to Load Engineer Insights'}
+          </h2>
+          <p className="mt-2 text-xs text-slate-400">
+            {isEmpty
+              ? 'The API returned an empty insights list for this session.'
+              : (insightsError ?? 'The request to the backend API failed.')}
+          </p>
+          <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:justify-center">
+            <button
+              onClick={handleRetry}
+              className="rounded-lg border border-slate-700 bg-slate-800 px-4 py-2 text-xs font-semibold text-white transition hover:bg-slate-700 cursor-pointer"
+            >
+              Retry
+            </button>
+            <button
+              onClick={handleUseDemoData}
+              className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-4 py-2 text-xs font-semibold text-rose-400 transition hover:bg-rose-500/20 cursor-pointer"
+            >
+              Use Offline Demo Data
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -110,7 +210,7 @@ export const EngineerInsights: React.FC = () => {
               <span className="text-[10px] font-mono text-slate-500 uppercase font-semibold block">
                 Supporting Evidence Bullets:
               </span>
-              {insight.evidence.map((bullet, idx) => (
+              {(insight.evidence ?? []).map((bullet, idx) => (
                 <div key={idx} className="flex items-start gap-2">
                   <span className="text-rose-400 font-bold">•</span>
                   <span>{bullet}</span>

@@ -57,9 +57,9 @@ export default function App() {
 
           {activeTab === 'state' && <DriverState driver={currentDriver} />}
 
-          {activeTab === 'performance' && <Performance />}
+          {activeTab === 'performance' && <Performance driver={currentDriver} />}
 
-          {activeTab === 'correlation' && <Correlation />}
+          {activeTab === 'correlation' && <Correlation driver={currentDriver} />}
 
           {activeTab === 'insights' && <EngineerInsights />}
 

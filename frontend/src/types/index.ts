@@ -54,6 +54,7 @@ export interface LapTelemetry {
   rearTyreTempC: number;
   speedMaxKph: number;
   radioCallId?: string; // associated radio call if any
+  driverId?: string; // present on live API records; absent on MOCK_LAP_TELEMETRY (single generic stint, not per-driver)
 }
 
 export interface StateDistribution {

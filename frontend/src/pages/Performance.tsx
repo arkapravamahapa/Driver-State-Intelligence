@@ -1,10 +1,130 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import { MOCK_LAP_TELEMETRY } from '../data/mockData';
+import { LapTelemetry, DriverProfile } from '../types';
+import { fetchTelemetry } from '../api/telemetry';
 import { MetricCard } from '../components/common/MetricCard';
 import { Gauge, Clock, TrendingUp, Zap, Flag, Activity } from 'lucide-react';
 
-export const Performance: React.FC = () => {
+type TelemetryStatus = 'loading' | 'success' | 'error';
+
+interface PerformanceProps {
+  driver: DriverProfile;
+}
+
+export const Performance: React.FC<PerformanceProps> = ({ driver }) => {
+  // ---- Lap telemetry now comes from GET /api/telemetry instead of MOCK_LAP_TELEMETRY.
+  // mockData.ts is kept as-is (untouched) and used below as a manual offline
+  // fallback if the API call fails.
+  const [telemetry, setTelemetry] = useState<LapTelemetry[]>([]);
+  const [telemetryStatus, setTelemetryStatus] = useState<TelemetryStatus>('loading');
+  const [telemetryError, setTelemetryError] = useState<string | null>(null);
+  // MOCK_LAP_TELEMETRY has no driverId field (it's a single generic stint,
+  // not per-driver), so it can't be filtered by the selected driver without
+  // inventing an id. Track when we're in demo mode so it's shown unfiltered,
+  // while live API data (which does carry driverId) is scoped to the driver.
+  const [isDemoMode, setIsDemoMode] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadTelemetry = async () => {
+      setTelemetryStatus('loading');
+      setTelemetryError(null);
+      try {
+        const data = await fetchTelemetry();
+        if (cancelled) return;
+        setTelemetry(data);
+        setIsDemoMode(false);
+        setTelemetryStatus('success');
+      } catch (err) {
+        if (cancelled) return;
+        setTelemetryError(err instanceof Error ? err.message : 'Failed to load telemetry data.');
+        setTelemetryStatus('error');
+      }
+    };
+
+    loadTelemetry();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleRetry = () => {
+    setTelemetryStatus('loading');
+    setTelemetryError(null);
+    fetchTelemetry()
+      .then((data) => {
+        setTelemetry(data);
+        setIsDemoMode(false);
+        setTelemetryStatus('success');
+      })
+      .catch((err) => {
+        setTelemetryError(err instanceof Error ? err.message : 'Failed to load telemetry data.');
+        setTelemetryStatus('error');
+      });
+  };
+
+  const handleUseDemoData = () => {
+    setTelemetry(MOCK_LAP_TELEMETRY);
+    setIsDemoMode(true);
+    setTelemetryStatus('success');
+    setTelemetryError(null);
+  };
+
+  // Live API telemetry carries driverId, so scope it to the selected driver.
+  // Offline demo data has no driverId to filter on, so it's shown as-is.
+  const driverTelemetry = isDemoMode ? telemetry : telemetry.filter((item) => item.driverId === driver.id);
+
+  // ---- Loading state ----
+  if (telemetryStatus === 'loading') {
+    return (
+      <div className="flex h-64 items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-slate-700 border-t-cyan-500" />
+          <p className="font-mono text-xs uppercase tracking-wider text-slate-400">
+            Loading Telemetry Data…
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // ---- Error state (fetch failed) or empty state (no telemetry for this driver) ----
+  if (telemetryStatus === 'error' || driverTelemetry.length === 0) {
+    const isEmpty = telemetryStatus === 'success' && driverTelemetry.length === 0;
+
+    return (
+      <div className="flex h-64 items-center justify-center px-4">
+        <div className="w-full max-w-md rounded-xl border border-rose-500/30 bg-slate-900/90 p-6 text-center shadow-lg">
+          <h2 className="font-mono text-sm font-bold uppercase tracking-wider text-rose-400">
+            {isEmpty ? 'No Telemetry Data Available' : 'Unable to Load Telemetry Data'}
+          </h2>
+          <p className="mt-2 text-xs text-slate-400">
+            {isEmpty
+              ? `No telemetry data available for ${driver.name}.`
+              : (telemetryError ?? 'The request to the backend API failed.')}
+          </p>
+          <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:justify-center">
+            <button
+              onClick={handleRetry}
+              className="rounded-lg border border-slate-700 bg-slate-800 px-4 py-2 text-xs font-semibold text-white transition hover:bg-slate-700 cursor-pointer"
+            >
+              Retry
+            </button>
+            <button
+              onClick={handleUseDemoData}
+              className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-4 py-2 text-xs font-semibold text-rose-400 transition hover:bg-rose-500/20 cursor-pointer"
+            >
+              Use Offline Demo Data
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ---- Ready state (existing UI, unchanged, now sourced from telemetry state) ----
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -83,7 +203,7 @@ export const Performance: React.FC = () => {
 
         <div className="my-4 h-64 w-full">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={MOCK_LAP_TELEMETRY} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+            <LineChart data={driverTelemetry} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
               <XAxis dataKey="lapNumber" stroke="#64748b" fontSize={11} fontFamily="monospace" tickFormatter={(v) => `L${v}`} />
               <YAxis domain={[81, 88]} stroke="#64748b" fontSize={11} fontFamily="monospace" tickFormatter={(v) => `${v}s`} />
@@ -139,7 +259,7 @@ export const Performance: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60">
-              {MOCK_LAP_TELEMETRY.slice(-8).map((lap) => (
+              {driverTelemetry.slice(-8).map((lap) => (
                 <tr key={lap.lapNumber} className="hover:bg-slate-800/40 transition">
                   <td className="py-2.5 font-bold text-white">LAP {lap.lapNumber}</td>
                   <td className="py-2.5 font-bold text-cyan-400">{lap.lapTimeFormatted}</td>

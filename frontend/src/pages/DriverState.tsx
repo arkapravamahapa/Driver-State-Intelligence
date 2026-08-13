@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { DriverProfile } from '../types';
 import { MOCK_STATE_TRANSITIONS, MOCK_RADIO_CALLS } from '../data/mockData';
 import { StatusBadge } from '../components/common/StatusBadge';
 import { MetricCard } from '../components/common/MetricCard';
+import { fetchDriverState } from '../api/state';
 import { 
   Activity, 
   TrendingUp, 
@@ -19,7 +20,110 @@ interface DriverStateProps {
   driver: DriverProfile;
 }
 
+type DriverStateStatus = 'loading' | 'success' | 'error';
+
 export const DriverState: React.FC<DriverStateProps> = ({ driver }) => {
+  // ---- Current state now comes from GET /api/state/:driverId instead of
+  // relying solely on driver.currentState. NOTE: the backend endpoint only
+  // derives `currentState` (from the driver's latest radio call) — it does
+  // not provide confidence, trend, or a distribution breakdown, so those
+  // continue to come from the `driver` prop exactly as before.
+  const [apiCurrentState, setApiCurrentState] = useState<DriverProfile['currentState'] | null>(null);
+  const [stateStatus, setStateStatus] = useState<DriverStateStatus>('loading');
+  const [stateError, setStateError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadState = async () => {
+      setStateStatus('loading');
+      setStateError(null);
+      try {
+        const data = await fetchDriverState(driver.id);
+        if (cancelled) return;
+        setApiCurrentState(data.currentState);
+        setStateStatus('success');
+      } catch (err) {
+        if (cancelled) return;
+        setStateError(err instanceof Error ? err.message : 'Failed to load driver state.');
+        setStateStatus('error');
+      }
+    };
+
+    loadState();
+    return () => {
+      cancelled = true;
+    };
+  }, [driver.id]);
+
+  const handleRetry = () => {
+    setStateStatus('loading');
+    setStateError(null);
+    fetchDriverState(driver.id)
+      .then((data) => {
+        setApiCurrentState(data.currentState);
+        setStateStatus('success');
+      })
+      .catch((err) => {
+        setStateError(err instanceof Error ? err.message : 'Failed to load driver state.');
+        setStateStatus('error');
+      });
+  };
+
+  const handleUseDemoData = () => {
+    // Falls back to this driver's own mock-derived state (already on the `driver` prop).
+    setApiCurrentState(driver.currentState);
+    setStateStatus('success');
+    setStateError(null);
+  };
+
+  // ---- Loading state ----
+  if (stateStatus === 'loading') {
+    return (
+      <div className="flex h-64 items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-slate-700 border-t-rose-500" />
+          <p className="font-mono text-xs uppercase tracking-wider text-slate-400">
+            Loading Driver State…
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // ---- Error state ----
+  if (stateStatus === 'error') {
+    return (
+      <div className="flex h-64 items-center justify-center px-4">
+        <div className="w-full max-w-md rounded-xl border border-rose-500/30 bg-slate-900/90 p-6 text-center shadow-lg">
+          <h2 className="font-mono text-sm font-bold uppercase tracking-wider text-rose-400">
+            Unable to Load Driver State
+          </h2>
+          <p className="mt-2 text-xs text-slate-400">
+            {stateError ?? 'The request to the backend API failed.'}
+          </p>
+          <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:justify-center">
+            <button
+              onClick={handleRetry}
+              className="rounded-lg border border-slate-700 bg-slate-800 px-4 py-2 text-xs font-semibold text-white transition hover:bg-slate-700 cursor-pointer"
+            >
+              Retry
+            </button>
+            <button
+              onClick={handleUseDemoData}
+              className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-4 py-2 text-xs font-semibold text-rose-400 transition hover:bg-rose-500/20 cursor-pointer"
+            >
+              Use Offline Demo Data
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ---- Ready state (existing UI, unchanged; Primary Classification now sourced from API state) ----
+  const currentState = apiCurrentState ?? driver.currentState;
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -36,10 +140,10 @@ export const DriverState: React.FC<DriverStateProps> = ({ driver }) => {
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <MetricCard
           title="Primary Classification"
-          value={driver.currentState}
+          value={currentState}
           subValue={`${driver.stateConfidence}% CONF`}
           icon={Activity}
-          badge={<StatusBadge state={driver.currentState} size="sm" />}
+          badge={<StatusBadge state={currentState} size="sm" />}
           statusColor="rose"
           accentBorder
         />

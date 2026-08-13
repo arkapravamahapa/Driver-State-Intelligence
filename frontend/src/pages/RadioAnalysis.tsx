@@ -1,28 +1,134 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { MOCK_RADIO_CALLS } from '../data/mockData';
 import { RadioCall } from '../types';
+import { fetchRadioCalls } from '../api/radio';
 import { WaveformVisualizer } from '../components/common/WaveformVisualizer';
 import { StatusBadge } from '../components/common/StatusBadge';
-import { 
-  Radio, 
-  Mic, 
-  Sparkles, 
-  Clock, 
-  Tag, 
-  Smile, 
-  ShieldCheck, 
-  Activity, 
+import {
+  Radio,
+  Mic,
+  Sparkles,
+  Clock,
+  Tag,
+  Smile,
+  ShieldCheck,
+  Activity,
   Volume2,
   FileText,
   Search
 } from 'lucide-react';
 
+type RadioCallsStatus = 'loading' | 'success' | 'error';
+
 export const RadioAnalysis: React.FC = () => {
-  const [selectedCall, setSelectedCall] = useState<RadioCall>(MOCK_RADIO_CALLS[0]);
+  // ---- Radio call data now comes from GET /api/radio instead of MOCK_RADIO_CALLS.
+  // mockData.ts is kept as-is (untouched) and used below as a manual offline
+  // fallback if the API call fails.
+  const [radioCalls, setRadioCalls] = useState<RadioCall[]>([]);
+  const [radioCallsStatus, setRadioCallsStatus] = useState<RadioCallsStatus>('loading');
+  const [radioCallsError, setRadioCallsError] = useState<string | null>(null);
+
+  const [selectedCall, setSelectedCall] = useState<RadioCall | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
-  const filteredCalls = MOCK_RADIO_CALLS.filter(
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadRadioCalls = async () => {
+      setRadioCallsStatus('loading');
+      setRadioCallsError(null);
+      try {
+        const data = await fetchRadioCalls();
+        if (cancelled) return;
+        setRadioCalls(data);
+        setSelectedCall(data[0] ?? null);
+        setRadioCallsStatus('success');
+      } catch (err) {
+        if (cancelled) return;
+        setRadioCallsError(err instanceof Error ? err.message : 'Failed to load radio calls.');
+        setRadioCallsStatus('error');
+      }
+    };
+
+    loadRadioCalls();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleRetry = () => {
+    setRadioCallsStatus('loading');
+    setRadioCallsError(null);
+    fetchRadioCalls()
+      .then((data) => {
+        setRadioCalls(data);
+        setSelectedCall(data[0] ?? null);
+        setRadioCallsStatus('success');
+      })
+      .catch((err) => {
+        setRadioCallsError(err instanceof Error ? err.message : 'Failed to load radio calls.');
+        setRadioCallsStatus('error');
+      });
+  };
+
+  const handleUseDemoData = () => {
+    setRadioCalls(MOCK_RADIO_CALLS);
+    setSelectedCall(MOCK_RADIO_CALLS[0] ?? null);
+    setRadioCallsStatus('success');
+    setRadioCallsError(null);
+  };
+
+  // ---- Loading state ----
+  if (radioCallsStatus === 'loading') {
+    return (
+      <div className="flex h-64 items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-slate-700 border-t-rose-500" />
+          <p className="font-mono text-xs uppercase tracking-wider text-slate-400">
+            Loading Radio Transmissions…
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // ---- Error state (fetch failed) or empty state (API returned zero calls) ----
+  if (radioCallsStatus === 'error' || !selectedCall) {
+    const isEmpty = radioCallsStatus === 'success' && !selectedCall;
+
+    return (
+      <div className="flex h-64 items-center justify-center px-4">
+        <div className="w-full max-w-md rounded-xl border border-rose-500/30 bg-slate-900/90 p-6 text-center shadow-lg">
+          <h2 className="font-mono text-sm font-bold uppercase tracking-wider text-rose-400">
+            {isEmpty ? 'No Radio Transmissions Available' : 'Unable to Load Radio Data'}
+          </h2>
+          <p className="mt-2 text-xs text-slate-400">
+            {isEmpty
+              ? 'The API returned an empty radio call list for this session.'
+              : (radioCallsError ?? 'The request to the backend API failed.')}
+          </p>
+          <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:justify-center">
+            <button
+              onClick={handleRetry}
+              className="rounded-lg border border-slate-700 bg-slate-800 px-4 py-2 text-xs font-semibold text-white transition hover:bg-slate-700 cursor-pointer"
+            >
+              Retry
+            </button>
+            <button
+              onClick={handleUseDemoData}
+              className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-4 py-2 text-xs font-semibold text-rose-400 transition hover:bg-rose-500/20 cursor-pointer"
+            >
+              Use Offline Demo Data
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ---- Ready state (existing UI, unchanged, now sourced from radioCalls/selectedCall state) ----
+  const filteredCalls = radioCalls.filter(
     (call) =>
       call.transcript.toLowerCase().includes(searchQuery.toLowerCase()) ||
       call.topic.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -173,7 +279,7 @@ export const RadioAnalysis: React.FC = () => {
                 <div className="text-[10px] font-mono uppercase text-slate-500 mb-2">
                   Timestamped Sentence Stream
                 </div>
-                
+
                 <div className="font-sans text-lg font-medium text-slate-100 leading-relaxed">
                   &ldquo;
                   {selectedCall.transcript.split(selectedCall.highlightedPhrase || '').map((part, i, arr) => (

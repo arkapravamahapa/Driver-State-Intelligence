@@ -1,8 +1,40 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { MOCK_RADIO_CALLS, MOCK_LAP_TELEMETRY } from '../data/mockData';
 import { DriverState, TopicCategory } from '../types';
 import { StatusBadge } from '../components/common/StatusBadge';
+import { fetchSessionHistory, SessionHistoryRow } from '../api/sessionHistory';
 import { History, Search, Filter, Download, ArrowUpDown } from 'lucide-react';
+
+type SessionStatus = 'loading' | 'success' | 'error';
+
+// The table renders this shape regardless of source (live API or offline
+// demo). lapTime/delta come from a client-side join against telemetry mock
+// data in demo mode; live /api/session-history does NOT provide
+// lapTimeFormatted/deltaVsBest, so those are shown as 'N/A' in live mode
+// rather than fabricated (see integration report).
+interface DisplayRow {
+  id: string;
+  time: string;
+  lap: number;
+  state: string;
+  confidence: number;
+  topic: string;
+  transcript: string;
+  lapTime: string;
+  delta: string;
+}
+
+const toDisplayRow = (row: SessionHistoryRow): DisplayRow => ({
+  id: row.id,
+  time: row.timestamp,
+  lap: row.lapNumber,
+  state: row.detectedState,
+  confidence: row.confidence,
+  topic: row.topic,
+  transcript: row.transcript,
+  lapTime: 'N/A',
+  delta: 'N/A',
+});
 
 export const SessionHistory: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
@@ -12,38 +44,124 @@ export const SessionHistory: React.FC = () => {
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [exportedToast, setExportedToast] = useState(false);
 
-  // Combine Radio Calls and Telemetry into Session Row items
-  const combinedData = MOCK_RADIO_CALLS.map((call) => {
-    const matchingLap = MOCK_LAP_TELEMETRY.find((l) => l.lapNumber === call.lapNumber);
-    return {
-      id: call.id,
-      time: call.timestamp,
-      lap: call.lapNumber,
-      state: call.detectedState,
-      confidence: call.confidence,
-      topic: call.topic,
-      transcript: call.transcript,
-      lapTime: matchingLap ? matchingLap.lapTimeFormatted : '1:24.6',
-      delta: matchingLap ? `+${matchingLap.deltaVsBest}s` : '+1.8s',
-    };
+  // ---- Session history now comes from GET /api/session-history instead of
+  // the client-side MOCK_RADIO_CALLS + MOCK_LAP_TELEMETRY join.
+  // mockData.ts is kept as-is (untouched) and the original join/filter/sort
+  // logic is preserved below, used only as the offline/demo fallback.
+  const [liveRows, setLiveRows] = useState<SessionHistoryRow[]>([]);
+  const [status, setStatus] = useState<SessionStatus>('loading');
+  const [error, setError] = useState<string | null>(null);
+  const [isDemoMode, setIsDemoMode] = useState(false);
+
+  const buildParams = () => ({
+    search: searchQuery || undefined,
+    state: selectedState !== 'ALL' ? selectedState : undefined,
+    topic: selectedTopic !== 'ALL' ? selectedTopic : undefined,
+    // 'confidence' has no backend sortBy equivalent (only lapNumber, stressScore,
+    // timestamp are supported) — omit sortBy entirely in that case rather than
+    // sending an invalid value; confidence sort is instead applied client-side
+    // below, on data the backend already filtered/searched for us.
+    sortBy: sortBy === 'lap' ? ('lapNumber' as const) : undefined,
+    sortOrder,
   });
 
-  const filteredData = combinedData
-    .filter((row) => {
-      const matchesSearch =
-        row.transcript.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        row.topic.toLowerCase().includes(searchQuery.toLowerCase());
-      const matchesState = selectedState === 'ALL' || row.state === selectedState;
-      const matchesTopic = selectedTopic === 'ALL' || row.topic === selectedTopic;
-      return matchesSearch && matchesState && matchesTopic;
-    })
-    .sort((a, b) => {
-      if (sortBy === 'lap') {
-        return sortOrder === 'desc' ? b.lap - a.lap : a.lap - b.lap;
-      } else {
-        return sortOrder === 'desc' ? b.confidence - a.confidence : a.confidence - b.confidence;
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadHistory = async () => {
+      setStatus('loading');
+      setError(null);
+      try {
+        const data = await fetchSessionHistory(buildParams());
+        if (cancelled) return;
+        setLiveRows(data);
+        setIsDemoMode(false);
+        setStatus('success');
+      } catch (err) {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : 'Failed to load session history.');
+        setStatus('error');
       }
+    };
+
+    loadHistory();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchQuery, selectedState, selectedTopic, sortBy, sortOrder]);
+
+  const handleRetry = () => {
+    setStatus('loading');
+    setError(null);
+    fetchSessionHistory(buildParams())
+      .then((data) => {
+        setLiveRows(data);
+        setIsDemoMode(false);
+        setStatus('success');
+      })
+      .catch((err) => {
+        setError(err instanceof Error ? err.message : 'Failed to load session history.');
+        setStatus('error');
+      });
+  };
+
+  const handleUseDemoData = () => {
+    setIsDemoMode(true);
+    setStatus('success');
+    setError(null);
+  };
+
+  // ---- Offline demo mode: original client-side join + filter + sort,
+  // unchanged from the pre-integration implementation. ----
+  const computeDemoRows = (): DisplayRow[] => {
+    const combinedData = MOCK_RADIO_CALLS.map((call) => {
+      const matchingLap = MOCK_LAP_TELEMETRY.find((l) => l.lapNumber === call.lapNumber);
+      return {
+        id: call.id,
+        time: call.timestamp,
+        lap: call.lapNumber,
+        state: call.detectedState,
+        confidence: call.confidence,
+        topic: call.topic,
+        transcript: call.transcript,
+        lapTime: matchingLap ? matchingLap.lapTimeFormatted : '1:24.6',
+        delta: matchingLap ? `+${matchingLap.deltaVsBest}s` : '+1.8s',
+      };
     });
+
+    return combinedData
+      .filter((row) => {
+        const matchesSearch =
+          row.transcript.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          row.topic.toLowerCase().includes(searchQuery.toLowerCase());
+        const matchesState = selectedState === 'ALL' || row.state === selectedState;
+        const matchesTopic = selectedTopic === 'ALL' || row.topic === selectedTopic;
+        return matchesSearch && matchesState && matchesTopic;
+      })
+      .sort((a, b) => {
+        if (sortBy === 'lap') {
+          return sortOrder === 'desc' ? b.lap - a.lap : a.lap - b.lap;
+        } else {
+          return sortOrder === 'desc' ? b.confidence - a.confidence : a.confidence - b.confidence;
+        }
+      });
+  };
+
+  // ---- Live mode: backend already filtered/searched/sorted (except
+  // 'confidence', which it doesn't support — applied client-side here on
+  // the already-fetched data, not re-fetched or duplicated). ----
+  const computeLiveRows = (): DisplayRow[] => {
+    const adapted = liveRows.map(toDisplayRow);
+    if (sortBy === 'confidence') {
+      return [...adapted].sort((a, b) =>
+        sortOrder === 'desc' ? b.confidence - a.confidence : a.confidence - b.confidence
+      );
+    }
+    return adapted;
+  };
+
+  const displayRows: DisplayRow[] = isDemoMode ? computeDemoRows() : computeLiveRows();
 
   const handleExport = () => {
     setExportedToast(true);
@@ -151,7 +269,57 @@ export const SessionHistory: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60">
-              {filteredData.map((row) => (
+              {status === 'loading' && (
+                <tr>
+                  <td colSpan={8} className="p-8">
+                    <div className="flex flex-col items-center justify-center gap-3">
+                      <div className="h-6 w-6 animate-spin rounded-full border-2 border-slate-700 border-t-cyan-500" />
+                      <p className="font-mono text-[11px] uppercase tracking-wider text-slate-400">
+                        Loading Session History…
+                      </p>
+                    </div>
+                  </td>
+                </tr>
+              )}
+
+              {status === 'error' && (
+                <tr>
+                  <td colSpan={8} className="p-8">
+                    <div className="flex flex-col items-center justify-center gap-2 text-center">
+                      <p className="font-mono text-xs font-bold uppercase tracking-wider text-rose-400">
+                        Unable to Load Session History
+                      </p>
+                      <p className="text-[11px] text-slate-400">
+                        {error ?? 'The request to the backend API failed.'}
+                      </p>
+                      <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:justify-center">
+                        <button
+                          onClick={handleRetry}
+                          className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 font-mono text-[11px] font-semibold text-white transition hover:bg-slate-700 cursor-pointer"
+                        >
+                          Retry
+                        </button>
+                        <button
+                          onClick={handleUseDemoData}
+                          className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-1.5 font-mono text-[11px] font-semibold text-rose-400 transition hover:bg-rose-500/20 cursor-pointer"
+                        >
+                          Use Offline Demo Data
+                        </button>
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+              )}
+
+              {status === 'success' && displayRows.length === 0 && (
+                <tr>
+                  <td colSpan={8} className="p-8 text-center font-mono text-xs text-slate-400">
+                    No session history rows match the current filters.
+                  </td>
+                </tr>
+              )}
+
+              {status === 'success' && displayRows.map((row) => (
                 <tr key={row.id} className="hover:bg-slate-800/40 transition">
                   <td className="p-3.5 text-slate-400">{row.time}</td>
                   <td className="p-3.5 font-bold text-white">LAP {row.lap}</td>
